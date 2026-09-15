@@ -26,8 +26,8 @@ conversion function's default of three bars; CoreWLAN documents 0 as an error
 or an unassociated interface.
 
 This reproduces the inspected conversion, not the ControlCenter process's
-cached state or its complete connection-state UI. Wi-Fi events plus a one-second
-poll reduce sampling delay but cannot guarantee frame-for-frame synchronization.
+cached state or its complete connection-state UI. Wi-Fi events plus a low-frequency
+fallback poll reduce sampling delay but cannot guarantee frame-for-frame synchronization.
 Future system versions may change the conversion. No private API is called.
 
 Recheck using `xcrun llvm-objdump --macho --arch=arm64e --disassemble` on the

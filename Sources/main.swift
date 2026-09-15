@@ -4,7 +4,7 @@ import IOKit.ps
 import SwiftUI
 import CoreLocation
 
-struct Status {
+struct Status: Equatable {
     var percent: Int?
     var charging = false
     var fullyCharged = false
@@ -15,6 +15,7 @@ struct Status {
     var minutesToFull: Int?
     var lowPower = false
     var wifiAvailable = false
+    var interfaceName: String?
     var security: CWSecurity = .unknown
 
     var bars: Int {
@@ -25,15 +26,18 @@ struct Status {
         return min(3, max(0, Int(ceil(quality * 3))))
     }
 
-    static func read() -> Status {
+    static func read(includeDetails: Bool = true) -> Status {
         var result = Status()
         result.lowPower = ProcessInfo.processInfo.isLowPowerModeEnabled
         if let wifi = CWWiFiClient.shared().interface() {
             result.wifiAvailable = true
+            result.interfaceName = wifi.interfaceName
             result.wifiOn = wifi.powerOn()
             result.rssi = wifi.rssiValue()
-            result.ssid = wifi.ssid()
-            result.security = wifi.security()
+            if includeDetails {
+                result.ssid = wifi.ssid()
+                result.security = wifi.security()
+            }
         }
         if let info = IOPSCopyPowerSourcesInfo()?.takeRetainedValue(),
            let sources = IOPSCopyPowerSourcesList(info)?.takeRetainedValue() as? [CFTypeRef] {
@@ -68,6 +72,20 @@ struct Status {
             return minutesToFull.map { "完全充满电还需 \($0) 分钟" } ?? "正在充电 · 正在估算剩余时间…"
         }
         return pluggedIn ? "电池未在充电" : "正在使用电池"
+    }
+}
+
+struct IconState: Equatable {
+    let percent: Int?
+    let pluggedIn: Bool
+    let wifiOn: Bool
+    let bars: Int
+
+    init(_ status: Status) {
+        percent = status.percent
+        pluggedIn = status.pluggedIn
+        wifiOn = status.wifiOn
+        bars = status.bars
     }
 }
 
@@ -142,6 +160,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, CWEventDelegate, NSPop
     private let locationManager = CLLocationManager()
     private var globalClickMonitor: Any?
     private var localClickMonitor: Any?
+    private var renderedIcon: IconState?
+    private var pendingRefresh: DispatchWorkItem?
+    private var powerSource: CFRunLoopSource?
+    private var sleeping = false
+    private var fallbackInterval: TimeInterval = 30
     private var showPercent: Bool {
         get { UserDefaults.standard.object(forKey: "showPercent") as? Bool ?? false }
         set { UserDefaults.standard.set(newValue, forKey: "showPercent") }
@@ -156,7 +179,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, CWEventDelegate, NSPop
             guard let self = self else { return }
             self.showPercent = value
             self.popover.performClose(nil)
-            self.refresh()
+            self.renderStatus()
         }
         panel.onWiFiChange = { [weak self] value in self?.setWiFi(value) }
         panel.onSettings = { [weak self] section in self?.openSettings(section) }
@@ -166,15 +189,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, CWEventDelegate, NSPop
         let host = NSHostingController(rootView: StatusPanel(model: panel))
         host.sizingOptions = [.preferredContentSize]
         popover.contentViewController = host
+        item.button?.imagePosition = .imageLeading
+        item.button?.font = .monospacedDigitSystemFont(ofSize: 11, weight: .medium)
         refresh()
         let wifi = CWWiFiClient.shared()
         wifi.delegate = self
         for event: CWEventType in [.linkQualityDidChange, .powerDidChange, .linkDidChange] {
-            try? wifi.startMonitoringEvent(with: event)
+            do { try wifi.startMonitoringEvent(with: event) }
+            catch { fallbackInterval = 5 }
         }
-        timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.refresh() }
-        timer?.tolerance = 0.2
-        NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(refresh), name: NSWorkspace.didWakeNotification, object: nil)
+        powerSource = IOPSNotificationCreateRunLoopSource({ context in
+            guard let context = context else { return }
+            let delegate = Unmanaged<AppDelegate>.fromOpaque(context).takeUnretainedValue()
+            delegate.queueRefresh()
+        }, Unmanaged.passUnretained(self).toOpaque())?.takeRetainedValue()
+        if let source = powerSource { CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes) }
+        else { fallbackInterval = 5 }
+        configureTimer()
+        NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(didWake), name: NSWorkspace.didWakeNotification, object: nil)
+        NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(willSleep), name: NSWorkspace.willSleepNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(powerModeChanged), name: .NSProcessInfoPowerStateDidChange, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(closePanel), name: NSApplication.didResignActiveNotification, object: nil)
         if locationManager.authorizationStatus == .notDetermined {
             NSApp.activate(ignoringOtherApps: true)
@@ -183,27 +217,84 @@ final class AppDelegate: NSObject, NSApplicationDelegate, CWEventDelegate, NSPop
     }
 
     @objc private func refresh() {
-        status = Status.read()
-        panel.status = status
+        refresh(includeDetails: popover.isShown)
+    }
+
+    private func refresh(includeDetails: Bool) {
+        guard !sleeping else { return }
+        pendingRefresh?.cancel()
+        pendingRefresh = nil
+        status = Status.read(includeDetails: includeDetails)
+        if includeDetails && panel.status != status { panel.status = status }
+        renderStatus()
+    }
+
+    private func renderStatus() {
         guard let button = item.button else { return }
-        button.image = DuoIcon.draw(status, foreground: .black)
-        button.imagePosition = .imageLeading
-        button.font = .monospacedDigitSystemFont(ofSize: 11, weight: .medium)
+        let iconState = IconState(status)
+        if renderedIcon != iconState {
+            button.image = DuoIcon.draw(status, foreground: .black)
+            renderedIcon = iconState
+        }
         // Keep the popover anchor stationary until it has closed.
         if !popover.isShown {
-            button.title = showPercent ? status.percent.map { " \($0)%" } ?? " --" : ""
+            let title = showPercent ? status.percent.map { " \($0)%" } ?? " --" : ""
+            if button.title != title { button.title = title }
         }
-        button.toolTip = status.description
-        button.setAccessibilityLabel(status.description)
+        let description = status.description
+        if button.toolTip != description {
+            button.toolTip = description
+            button.setAccessibilityLabel(description)
+        }
     }
 
     private func refreshFromWiFiEvent() {
-        DispatchQueue.main.async { [weak self] in self?.refresh() }
+        DispatchQueue.main.async { [weak self] in self?.queueRefresh() }
+    }
+
+    private func queueRefresh() {
+        guard !sleeping, pendingRefresh == nil else { return }
+        let work = DispatchWorkItem { [weak self] in self?.refresh() }
+        pendingRefresh = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
+    }
+
+    private func configureTimer() {
+        timer?.invalidate()
+        guard !sleeping else { timer = nil; return }
+        let interval = popover.isShown ? 5 : fallbackInterval
+        timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in self?.refresh() }
+        timer?.tolerance = interval * 0.2
+    }
+
+    @objc private func willSleep() {
+        sleeping = true
+        pendingRefresh?.cancel()
+        pendingRefresh = nil
+        closePanel()
+        configureTimer()
+    }
+
+    @objc private func didWake() {
+        sleeping = false
+        refresh()
+        configureTimer()
+    }
+
+    @objc private func powerModeChanged() { queueRefresh() }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        timer?.invalidate()
+        pendingRefresh?.cancel()
+        if let source = powerSource { CFRunLoopSourceInvalidate(source) }
+        try? CWWiFiClient.shared().stopMonitoringAllEvents()
+        stopMonitoringOutsideClicks()
     }
 
     func popoverDidClose(_ notification: Notification) {
         stopMonitoringOutsideClicks()
-        refresh()
+        renderStatus()
+        configureTimer()
     }
 
     @objc private func closePanel() {
@@ -238,17 +329,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, CWEventDelegate, NSPop
     }
 
     func linkQualityDidChangeForWiFiInterface(withName interfaceName: String, rssi: Int, transmitRate: Double) {
-        refreshFromWiFiEvent()
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self, !self.sleeping else { return }
+            guard self.status.interfaceName == interfaceName else { return }
+            guard self.status.rssi != rssi else { return }
+            self.status.rssi = rssi
+            self.renderStatus()
+            if self.popover.isShown && self.panel.status != self.status { self.panel.status = self.status }
+        }
     }
     func powerStateDidChangeForWiFiInterface(withName interfaceName: String) { refreshFromWiFiEvent() }
     func linkDidChangeForWiFiInterface(withName interfaceName: String) { refreshFromWiFiEvent() }
 
     @objc private func togglePanel() {
         if popover.isShown { popover.performClose(nil); return }
-        refresh()
+        refresh(includeDetails: true)
         guard let button = item.button else { return }
         NSApp.activate(ignoringOtherApps: true)
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        configureTimer()
         startMonitoringOutsideClicks()
     }
 
@@ -301,7 +400,25 @@ if CommandLine.arguments.contains("--self-test") {
     precondition(battery.chargeDetail == "电池未在充电")
     battery.fullyCharged = true
     precondition(battery.chargeDetail == "已充满")
-    print("PASS: Wi-Fi boundaries and battery panel states")
+    var original = Status()
+    original.percent = 80
+    original.wifiOn = true
+    original.rssi = -55
+    var changed = original
+    changed.rssi = -56
+    changed.ssid = "Test Network"
+    changed.minutesToFull = 20
+    precondition(original != changed)
+    precondition(IconState(original) == IconState(changed), "Detail changes must not redraw the icon")
+    changed.rssi = -80
+    precondition(IconState(original) != IconState(changed))
+    changed = original
+    changed.pluggedIn = true
+    precondition(IconState(original) != IconState(changed))
+    changed = original
+    changed.percent = 81
+    precondition(IconState(original) != IconState(changed))
+    print("PASS: Wi-Fi boundaries, battery states, and icon change detection")
 } else if CommandLine.arguments.contains("--diagnose") {
     print(Status.read().description)
 } else {

@@ -50,7 +50,7 @@ struct Status: Equatable {
                 result.charging = data[kIOPSIsChargingKey] as? Bool ?? false
                 result.fullyCharged = data[kIOPSIsChargedKey] as? Bool ?? false
                 result.pluggedIn = data[kIOPSPowerSourceStateKey] as? String == kIOPSACPowerValue
-                if let minutes = data[kIOPSTimeToFullChargeKey] as? Int, minutes > 0 {
+                if let minutes = data[kIOPSTimeToFullChargeKey] as? Int, minutes >= 0 {
                     result.minutesToFull = minutes
                 }
                 break
@@ -60,15 +60,20 @@ struct Status: Equatable {
     }
 
     var description: String {
-        let battery = percent.map { "电量 \($0)% · \(charging ? "正在充电" : (pluggedIn ? (fullyCharged ? "已插电 · 已充满" : "已插电 · 未充电") : "使用电池"))" } ?? "未检测到内置电池"
+        let battery = percent.map { "电量 \($0)% · \(displayFullyCharged ? "已充满" : (charging ? "正在充电" : (pluggedIn ? "已插电 · 未充电" : "使用电池")))" } ?? "未检测到内置电池"
         let wifi = !wifiOn ? "Wi-Fi 已关闭" : (bars == 0 ? "Wi-Fi 未连接或信号不可用" : "Wi-Fi \(bars)/3 格 · \(rssi) dBm")
         return "\(battery)\n\(wifi)"
     }
 
+    var displayFullyCharged: Bool {
+        fullyCharged || (pluggedIn && percent == 100 && minutesToFull == 0)
+    }
+
     var chargeDetail: String {
         guard percent != nil else { return "未检测到内置电池" }
-        if fullyCharged { return "已充满" }
+        if displayFullyCharged { return "已充满" }
         if charging {
+            if minutesToFull == 0 { return "正在完成充电" }
             return minutesToFull.map { "完全充满电还需 \($0) 分钟" } ?? "正在充电 · 正在估算剩余时间…"
         }
         return pluggedIn ? "电池未在充电" : "正在使用电池"
@@ -400,6 +405,22 @@ if CommandLine.arguments.contains("--self-test") {
     precondition(battery.chargeDetail == "电池未在充电")
     battery.fullyCharged = true
     precondition(battery.chargeDetail == "已充满")
+    battery.fullyCharged = false
+    battery.charging = true
+    battery.percent = 100
+    battery.minutesToFull = 0
+    precondition(battery.chargeDetail == "已充满")
+    precondition(battery.description.contains("已充满"))
+    battery.minutesToFull = nil
+    precondition(battery.chargeDetail.contains("估算"))
+    battery.minutesToFull = 5
+    precondition(battery.chargeDetail == "完全充满电还需 5 分钟")
+    battery.percent = 80
+    battery.minutesToFull = 0
+    precondition(battery.chargeDetail == "正在完成充电")
+    battery.pluggedIn = false
+    battery.charging = false
+    precondition(battery.chargeDetail == "正在使用电池")
     var original = Status()
     original.percent = 80
     original.wifiOn = true

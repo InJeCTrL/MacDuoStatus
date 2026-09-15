@@ -2,6 +2,8 @@
 
 [简体中文](README.md) | **English**
 
+[![Build and Release](https://github.com/InJeCTrL/MacDuoStatus/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/InJeCTrL/MacDuoStatus/actions/workflows/build.yml)
+
 A native macOS menu bar app combining Wi-Fi signal, battery level, and power status in one icon.
 
 ## Install
@@ -11,6 +13,8 @@ A native macOS menu bar app combining Wi-Fi signal, battery level, and power sta
 3. Allow Location Services on first launch to display the Wi-Fi network name. The app does not collect or upload your location.
 
 Requires macOS 13 or later. Supports Apple Silicon and Intel. The app is not notarized; if macOS blocks it, verify the download source and choose **Open Anyway** in **System Settings > Privacy & Security**.
+
+Development builds: open the latest successful main-branch run in [Actions](https://github.com/InJeCTrL/MacDuoStatus/actions/workflows/build.yml?query=branch%3Amain) and download **Artifacts > MacDuoStatus-universal** (GitHub sign-in required). Version tags publish stable builds to Releases.
 
 ## Use
 

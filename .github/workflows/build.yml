@@ -1,0 +1,86 @@
+name: Build and Release
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Build universal app
+        shell: bash
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [[ "$REF_TYPE" == tag ]]; then
+            export VERSION="${REF_NAME#v}"
+          fi
+          UNIVERSAL=1 zsh build.sh
+
+      - name: Verify and test
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP="build/Duo Status.app"
+          lipo "$APP/Contents/MacOS/DuoStatusIcon" -verify_arch arm64 x86_64
+          codesign --verify --deep --strict "$APP"
+          plutil -lint "$APP/Contents/Info.plist"
+          "$APP/Contents/MacOS/DuoStatusIcon" --self-test
+
+      - name: Package
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd build
+          ditto -c -k --sequesterRsrc --keepParent "Duo Status.app" MacDuoStatus-universal.zip
+          unzip -t MacDuoStatus-universal.zip
+          shasum -a 256 MacDuoStatus-universal.zip > SHA256SUMS.txt
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: MacDuoStatus-universal
+          path: |
+            build/MacDuoStatus-universal.zip
+            build/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --verify-tag --draft \
+              --title "Duo Status $TAG" --notes-file docs/release-notes.md
+          fi
+          if [[ "$(gh release view "$TAG" --json isDraft --jq .isDraft)" == true ]]; then
+            gh release upload "$TAG" build/MacDuoStatus-universal.zip build/SHA256SUMS.txt --clobber
+            gh release edit "$TAG" --draft=false
+          fi

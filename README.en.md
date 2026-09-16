@@ -23,6 +23,8 @@ A native macOS menu bar app combining Wi-Fi signal, battery level, and power sta
 2. Extract it, move `Duo Status.app` to Applications, and launch it.
 3. Allow Location Services on first launch to display the Wi-Fi network name. The app does not collect or upload your location.
 
+The app requests location permission at startup when the system authorization status is not determined. It does not request again if permission is already granted or denied. You can change it in **System Settings > Privacy & Security > Location Services**.
+
 Requires macOS 13 or later. Supports Apple Silicon and Intel. The app is not notarized; if macOS blocks it, verify the download source and choose **Open Anyway** in **System Settings > Privacy & Security**.
 
 Development builds: open the latest successful main-branch run in [Actions](https://github.com/InJeCTrL/MacDuoStatus/actions/workflows/build.yml?query=branch%3Amain) and download **Artifacts > MacDuoStatus-universal** (GitHub sign-in required). Version tags publish stable builds to Releases.
@@ -32,7 +34,7 @@ Development builds: open the latest successful main-branch run in [Actions](http
 - The outer ring shows battery level; the center shows Wi-Fi signal. A solid plug means external power, and a dim plug means battery power.
 - Click the icon for battery and network details, the Wi-Fi switch, and the battery percentage option.
 - Command-drag the icon to reposition it. You can hide the system battery and Wi-Fi icons in System Settings.
-- To launch at login, add the app to Login Items in System Settings.
+- Launch at login is requested by default and can be disabled in the menu. If macOS requires approval, allow the app in Login Items.
 
 Background updates are event-driven, and the icon redraws only when its visual state changes. Wi-Fi bars may differ from the system icon across macOS versions or sampling times. The app interface is currently in Simplified Chinese.
 

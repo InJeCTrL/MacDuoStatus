@@ -6,6 +6,11 @@ final class PanelModel: ObservableObject {
     @Published var showPercent = false
     @Published var wifiBusy = false
     @Published var error: String?
+    @Published var launchAtLogin = false
+    @Published var loginNeedsApproval = false
+    @Published var loginError: String?
+    var onLoginToggle: () -> Void = {}
+    var onLoginSettings: () -> Void = {}
     var onPercentChange: (Bool) -> Void = { _ in }
     var onWiFiChange: (Bool) -> Void = { _ in }
     var onSettings: (String) -> Void = { _ in }
@@ -108,15 +113,43 @@ struct StatusPanel: View {
             .buttonStyle(.plain)
             .font(.system(size: 12))
             .accessibilityValue(model.showPercent ? "已勾选" : "未勾选")
+            Button(action: model.onLoginToggle) {
+                HStack {
+                    Text("登录时自动启动")
+                    Spacer()
+                }
+                .overlay(alignment: .leading) {
+                    if model.launchAtLogin {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 10, weight: .semibold)).offset(x: -13)
+                    }
+                }
+                .padding(.vertical, 6).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain).font(.system(size: 12))
+            .accessibilityValue(model.launchAtLogin ? "已开启" : "未开启")
+            if model.loginNeedsApproval {
+                Button("需在系统登录项中允许…", action: model.onLoginSettings)
+                    .buttonStyle(.link).font(.system(size: 11)).padding(.bottom, 6)
+            }
+            if let error = model.loginError {
+                Text(error).font(.system(size: 11)).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true).padding(.bottom, 6)
+            }
+            Divider().padding(.top, 10).padding(.horizontal, -16)
             HStack {
-                Text("Duo Status").foregroundStyle(.tertiary)
+                Text("Duo Status").foregroundStyle(.secondary)
                 Spacer()
                 Button("退出") { NSApp.terminate(nil) }.buttonStyle(.plain).foregroundStyle(.secondary)
             }
-            .font(.system(size: 11)).padding(.top, 14)
+            .font(.system(size: 11))
+            .padding(.horizontal, 16).frame(height: 36)
+            .padding(.horizontal, -16).padding(.bottom, -16)
         }
         .font(.system(size: 13))
-        .padding(16)
+        .padding(.horizontal, 16)
+        .padding(.top, 8)
+        .padding(.bottom, 16)
         .frame(width: 310)
         .fixedSize(horizontal: false, vertical: true)
     }

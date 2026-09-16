@@ -2,7 +2,8 @@
 set -euo pipefail
 cd "${0:A:h}"
 APP="$PWD/build/Duo Status.app"
-mkdir -p "$APP/Contents/MacOS"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+cp Assets/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 architectures=("$(uname -m)")
 if [[ "${UNIVERSAL:-0}" == "1" ]]; then
   architectures=(arm64 x86_64)

@@ -3,6 +3,7 @@ import CoreWLAN
 import IOKit.ps
 import SwiftUI
 import CoreLocation
+import ServiceManagement
 
 struct Status: Equatable {
     var percent: Int?
@@ -168,7 +169,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, CWEventDelegate, NSMen
     private let panel = PanelModel()
     private let menu = NSMenu()
     private var menuVisible = false
-    private var menuHost: NSView?
+    private let panelMenuItem = NSMenuItem()
     private let locationManager = CLLocationManager()
     private var renderedIcon: IconState?
     private var pendingRefresh: DispatchWorkItem?
@@ -193,15 +194,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, CWEventDelegate, NSMen
         }
         panel.onWiFiChange = { [weak self] value in self?.setWiFi(value) }
         panel.onSettings = { [weak self] section in self?.openSettings(section) }
+        panel.onLoginToggle = { [weak self] in self?.toggleLoginItem() }
+        panel.onLoginSettings = { [weak self] in
+            self?.closePanel()
+            SMAppService.openSystemSettingsLoginItems()
+        }
+        initializeLoginItem()
         locationManager.delegate = self
         menu.delegate = self
         menu.autoenablesItems = false
-        let host = NSHostingView(rootView: StatusPanel(model: panel).environment(\.controlActiveState, .active))
-        host.setFrameSize(host.fittingSize)
-        menuHost = host
-        let content = NSMenuItem()
-        content.view = host
-        menu.addItem(content)
+        menu.addItem(panelMenuItem)
         item.menu = menu
         item.button?.imagePosition = .imageLeading
         item.button?.font = .monospacedDigitSystemFont(ofSize: 11, weight: .medium)
@@ -332,8 +334,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, CWEventDelegate, NSMen
 
     func menuWillOpen(_ menu: NSMenu) {
         menuVisible = true
+        updateLoginState()
         refresh(includeDetails: true)
-        if let host = menuHost { host.setFrameSize(host.fittingSize) }
+        // Measure a fresh hierarchy with current data, not the empty startup model.
+        let host = NSHostingView(rootView: StatusPanel(model: panel)
+            .environment(\.controlActiveState, .active))
+        host.layoutSubtreeIfNeeded()
+        let size = host.fittingSize
+        host.setFrameSize(NSSize(width: ceil(size.width), height: ceil(size.height)))
+        host.layoutSubtreeIfNeeded()
+        panelMenuItem.view = host
         configureTimer()
     }
 
@@ -388,6 +398,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate, CWEventDelegate, NSMen
         let pane = section == "battery" ? "com.apple.preference.battery" : "com.apple.wifi-settings-extension"
         if let url = URL(string: "x-apple.systempreferences:\(pane)"), NSWorkspace.shared.open(url) { return }
         NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/System Settings.app"))
+    }
+
+    private func updateLoginState() {
+        let state = SMAppService.mainApp.status
+        panel.launchAtLogin = state == .enabled
+        panel.loginNeedsApproval = state == .requiresApproval
+    }
+
+    private func initializeLoginItem() {
+        let defaults = UserDefaults.standard
+        let wantsLogin = defaults.object(forKey: "launchAtLoginPreference") as? Bool ?? true
+        if wantsLogin && !defaults.bool(forKey: "loginItemRegistrationCompleted") {
+            let service = SMAppService.mainApp
+            if service.status != .enabled && service.status != .requiresApproval {
+                do { try service.register() }
+                catch { panel.loginError = "自动启动未开启：\(error.localizedDescription)" }
+            }
+            if service.status == .enabled || service.status == .requiresApproval {
+                defaults.set(true, forKey: "loginItemRegistrationCompleted")
+            }
+        }
+        updateLoginState()
+    }
+
+    private func toggleLoginItem() {
+        panel.loginError = nil
+        let service = SMAppService.mainApp
+        let enable = service.status != .enabled && service.status != .requiresApproval
+        let defaults = UserDefaults.standard
+        defaults.set(enable, forKey: "launchAtLoginPreference")
+        do {
+            if enable {
+                try service.register()
+            } else {
+                try service.unregister()
+            }
+        } catch { panel.loginError = "无法修改自动启动：\(error.localizedDescription)" }
+        defaults.set(service.status == .enabled || service.status == .requiresApproval,
+                     forKey: "loginItemRegistrationCompleted")
+        updateLoginState()
+        closePanel()
     }
 }
 

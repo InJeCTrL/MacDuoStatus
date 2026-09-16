@@ -6,6 +6,17 @@
 
 A native macOS menu bar app combining Wi-Fi signal, battery level, and power status in one icon.
 
+<img src="docs/assets/icon-demo.gif" width="440" alt="Battery, power, and Wi-Fi signal demo">
+
+<details>
+<summary>View the menu panel demo</summary>
+
+<img src="docs/assets/menu-demo.gif" width="370" alt="Battery and Wi-Fi menu panel demo">
+
+</details>
+
+*Animations use the actual UI components with simulated data, not live device readings.*
+
 ## Install
 
 1. Download `MacDuoStatus-universal.zip` from [Releases](https://github.com/InJeCTrL/MacDuoStatus/releases/latest).

@@ -6,6 +6,17 @@
 
 将 Wi-Fi 信号、电池电量和供电状态合并为一个 macOS 菜单栏图标。
 
+<img src="docs/assets/icon-demo.gif" width="440" alt="电量、供电与 Wi-Fi 信号变化演示">
+
+<details>
+<summary>查看菜单面板演示</summary>
+
+<img src="docs/assets/menu-demo.gif" width="370" alt="电池和 Wi-Fi 菜单面板演示">
+
+</details>
+
+*动图使用实际界面组件和模拟数据渲染，不代表实时设备状态。*
+
 ## 安装
 
 1. 从 [Releases](https://github.com/InJeCTrL/MacDuoStatus/releases/latest) 下载 `MacDuoStatus-universal.zip`。
